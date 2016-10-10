@@ -26,12 +26,33 @@
 # NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from __future__ import print_function
-
 import dbus
 import dbus.mainloop.glib
 import dbus.exceptions
+import logging
 import os
+
+
+class LogindError(Exception):
+    pass
+
+
+class NoSessionError(LogindError):
+
+    def __init__(self):
+        super().__init__('Could not get XDG session id')
+
+
+class NoLogindServiceError(LogindError):
+
+    def __init__(self):
+        super().__init__('Failed to connecto to logind DBus service')
+
+
+class SessionSignalError(LogindError):
+
+    def __init__(self):
+        super().__init__('Failed to attach to \'Lock\' signal')
 
 
 class LogindListener:
@@ -41,31 +62,48 @@ class LogindListener:
     OBJECT_SIGNAL = "Lock"
     SCREENSAVER_NAME = 'org.freedesktop.ScreenSaver'
     SCREENSAVER_PATH = '/' + SCREENSAVER_NAME.replace('.', '/')
+    LOGGER = logging.getLogger(__name__)
 
     def __init__(self, signal_cb=None):
-        dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+        try:
+            self.session_id = os.environ['XDG_SESSION_ID']
+        except KeyError:
+            raise NoSessionError()
+
         self.signal_cb = signal_cb
 
-        bus = dbus.SystemBus()
-        login_object = bus.get_object(LogindListener.SERVICE_NAME,
-                                      LogindListener.OBJECT_PATH)
-        interface = dbus.Interface(login_object,
-                                   LogindListener.SERVICE_INTERFACE)
+        dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+        self._attach_to_dbus()
 
-        session_id = os.environ['XDG_SESSION_ID']
-        session_path = interface.GetSession(session_id)
-        session_object = bus.get_object(LogindListener.SERVICE_NAME,
-                                        session_path)
-        session_object.connect_to_signal(LogindListener.OBJECT_SIGNAL,
-                                         lambda: self._handle_lock_signal())
+    def _attach_to_dbus(self):
+        self.LOGGER.info('Attaching to DBus')
+        bus = dbus.SystemBus()
+
+        try:
+            login_object = bus.get_object(LogindListener.SERVICE_NAME,
+                                          LogindListener.OBJECT_PATH)
+            interface = dbus.Interface(login_object,
+                                       LogindListener.SERVICE_INTERFACE)
+        except dbus.exceptions.DBusException:
+            raise NoLogindServiceError()
+
+        try:
+            session_path = interface.GetSession(self.session_id)
+            session_object = bus.get_object(LogindListener.SERVICE_NAME,
+                                            session_path)
+            session_object.connect_to_signal(LogindListener.OBJECT_SIGNAL,
+                                             self._handle_lock_signal)
+        except dbus.exceptions.DBusException:
+            raise SessionSignalError()
 
     def _handle_lock_signal(self):
+        self.LOGGER.info('Received \'lock-session\' command. Locking session.')
         bus = dbus.SessionBus()
         try:
             screensaver = bus.get_object(LogindListener.SCREENSAVER_NAME,
                                          LogindListener.SCREENSAVER_PATH)
         except dbus.exceptions.DBusException as e:
-            return
+            self.LOGGER.error('No screensaver registered')
 
         screensaver.Lock()
         if self.signal_cb:

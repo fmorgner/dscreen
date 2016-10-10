@@ -29,17 +29,20 @@
 import dbus
 import dbus.service
 import dbus.mainloop.glib
+import logging
 
 
 class Screensaver(dbus.service.Object):
     SERVICE_NAME = 'org.freedesktop.ScreenSaver'
     OBJECT_PATH = '/' + SERVICE_NAME.replace('.', '/')
+    LOGGER = logging.getLogger(__name__)
 
     def __init__(self, lock_cb=None, active_cb=None):
         self.lock_cb = lock_cb
         self.active_cb = active_cb
 
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+        self.LOGGER.info('Exporting service %s on DBus' % self.SERVICE_NAME)
         bus_name = dbus.service.BusName(
             Screensaver.SERVICE_NAME,
             dbus.SessionBus()
@@ -48,11 +51,19 @@ class Screensaver(dbus.service.Object):
 
     @dbus.service.method(SERVICE_NAME, in_signature='', out_signature='')
     def Lock(self):
+        self.LOGGER.info(('Received \'Lock\' method call. '
+                          'Invoking screensaver callback'))
         self.lock_cb()
 
     @dbus.service.method(SERVICE_NAME, in_signature='', out_signature='b')
     def GetActive(self):
         if self.active_cb:
+            self.LOGGER.info(('Received \'GetActive\' method call. '
+                              'Invoking active callback'))
             return self.active_cb()
         else:
+            self.LOGGER.info(
+                ('Received \'GetActive\' method call.'
+                 'No callback registered, defaulting to \'False\'')
+            )
             return False

@@ -1,8 +1,8 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 
 setup(
     name='dscreen',
-    version='0.1.0',
+    version='0.1.1',
     description='A DBus XScreenSaver connector',
     long_description='',
     url='https://github.com/fmorgner/dscreen',

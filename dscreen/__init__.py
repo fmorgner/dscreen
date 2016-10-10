@@ -38,14 +38,21 @@ import re
 import subprocess
 import sys
 
-logger = logging.getLogger('dscreen')
-logger.setLevel(logging.INFO)
-logging.basicConfig()
-logger.addHandler(logging.handlers.SysLogHandler('/dev/log'))
+
+syslog = logging.handlers.SysLogHandler(address='/dev/log')
+stdout = logging.StreamHandler(sys.stdout)
+formatter = logging.Formatter('[%(levelname)s]@%(asctime)s - %(message)s')
+syslog.setFormatter(formatter)
+stdout.setFormatter(formatter)
+LOG = logging.getLogger(__name__)
+LOG.setLevel(logging.INFO)
+LOG.propagate = False
+LOG.addHandler(syslog)
+LOG.addHandler(stdout)
 
 
 def lock_callback():
-    logger.info('Calling xscreensaver to lock the screen')
+    LOG.info('Calling xscreensaver to lock the screen')
     with open(os.devnull, 'w') as null:
         subprocess.call(
             ['xscreensaver-command', '-lock'],
@@ -55,7 +62,7 @@ def lock_callback():
 
 
 def active_callback():
-    logger.info('Calling xscreensaver to check the status')
+    LOG.info('Calling xscreensaver to check the status')
     output = subprocess.check_output(['xscreensaver-command', '-time'])
     return re.match(r'(screen (locked|blanked))', str(output)) is not None
 
@@ -65,7 +72,7 @@ def listener_daemon():
     try:
         GLib.MainLoop().run()
     except KeyboardInterrupt:
-        sys.exit(0)
+        LOG.info('DBus logind listener shutting down')
 
 
 def screensaver_daemon():
@@ -73,24 +80,32 @@ def screensaver_daemon():
     try:
         GLib.MainLoop().run()
     except KeyboardInterrupt:
-        sys.exit(0)
+        LOG.info('Screensaver service shutting down')
 
 
 def daemonize():
-    listener = multiprocessing.Process(
-        target=listener_daemon,
-        name='xscreensaver-dbus-listener'
-    )
-    listener.start()
-
-    screensaver = multiprocessing.Process(
-        target=screensaver_daemon,
-        name='xscreensaver-dbus-locker'
-    )
-    screensaver.start()
+    LOG.info('dscreen 0.1.1 ist starting up')
 
     try:
-        listener.join()
+        LOG.info('Starting DBus logind listener')
+        listener = multiprocessing.Process(
+            target=listener_daemon,
+            name='dscreen-dbus-listener'
+        )
+        listener.start()
+
+        LOG.info('Starting screensaver service')
+        screensaver = multiprocessing.Process(
+            target=screensaver_daemon,
+            name='dscreen-dbus-locker'
+        )
+        screensaver.start()
+
         screensaver.join()
+        listener.join()
     except KeyboardInterrupt:
-        pass
+        LOG.info('Received user interrupt')
+
+    LOG.info('Goodbye!')
+    syslog.close()
+    stdout.close()
